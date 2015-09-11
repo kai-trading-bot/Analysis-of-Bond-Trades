@@ -1,0 +1,498 @@
+*Khizar Qureshi, Research;
+*This version: 2015-09-04;
+******************************************************************************************************************************************************;
+*Introduction;
+******************************************************************************************************************************************************;
+
+*The purpose of table2 is to create a table that displays the characteristics of trades across different maturities;
+*The six types of maturities are: <1 year, 1-3 year, 3-5 year, 5-10 year, 10-20 year, 20+ year;
+*The characteristics studied include:; 
+*(1) Number of Trades, (2) Mean Trade Rate, (3) Trade Size in Value, (4) Trade Volume, (5) Frequency of days with a trade;
+*The moments studied are: (1) mean and (2) standard deviation (later);
+*These characteristics are across CUSIPS. We study across: (1) specific maturities, (2) overall;
+
+******************************************************************************************************************************************************;
+*Number of Trades: Defined as a count of trades;
+******************************************************************************************************************************************************;
+******************************************************************************************************************************************************;
+*Trades per Day: Defined as the sum of all trades divided by the number of trading days;
+******************************************************************************************************************************************************;
+******************************************************************************************************************************************************;
+*Trade Value: Defined as the transaction in value, as determined by a price and quantity of trade;
+******************************************************************************************************************************************************;
+******************************************************************************************************************************************************;
+*Mean Dollar Volume: Defined as the aggregate trade value over the span of a time period;
+******************************************************************************************************************************************************;
+******************************************************************************************************************************************************;
+*Trade Frequency: Defined as the proportion of days in which at least one trade occurred since the day of first trade;
+******************************************************************************************************************************************************;
+
+
+/* Trade-Type */																*Classification;
+%let path = T:\Khizar;																*Assign path to user folder;
+libname Data "&path\Data"; 															*Assign the path to \Data;
+%let _sdtm=%sysfunc(datetime()); 														*Begin timer because a secondary objective is to reduce runtime;
+
+proc sort data=Data.Tracetradestrim out=Data.Tracetradestrim; by Cusip matBucket; 								*Sort by cusip and classification;
+run;
+data Data.TraceTradestrim; 															*Data.Tracetradestrim will be the primary dataset;
+set Data.Tracedaystrim; *where EffectiveDateTime >= '01Jan2014:00:00:00'DT; 									*To truncate the dataset for initial testing;														
+by Cusip EffectiveDate; 															*sort by Cusips first since the summary stats are by cusip;	
+
+* Count Trading days per cusip;
+if lag(EffectiveDate)~= EffectiveDate then countTDays +1; 											*If consecutive effectivedates are distinguishable, increase the number of trading days by 1;
+if first.EffectiveDate and first.Cusip then countTDays = 1;											*Set the number of trading days to 1 if it is the first day a new cusip is trading;
+
+* Count time from first trade;
+daysfromfirst + dif(EffectiveDateTime)/86400; 													*Divide by number of seconds in a day (86400=60*60*24);
+if first.EffectiveDate and first.Cusip then daysfromfirst = 0; 											*If a new cusip is on its first effectivedate, set days from first day to zero;
+
+* Count Number of Trades per cusip;
+ntrades + 1; *Sum the trades;
+
+
+if first.Cusip then do;
+	ntrades=1; 																*Initialize the number of trades on each new cusip to 1;
+end;
+
+
+
+
+
+tradeValue = Quantity*Price/100;														*TV=Price*Quantity/100;
+							
+Volume + tradeValue; 																*Update the volume by adding trade value;
+Volume0 + tradeValue*(matBucket=0);
+Volume1 + tradeValue*(matBucket=1);
+Volume2 + tradeValue*(matBucket=2);
+Volume3 + tradeValue*(matBucket=3);
+Volume4 + tradeValue*(matBucket=4);
+Volume5 + tradeValue*(matBucket=5);
+
+
+
+if first.Cusip then do;																*For new cusips, begin to re-calculate volume;
+Volume=tradeValue;
+Volume0=tradeValue*(matBucket=0)/504;
+Volume1=tradeValue*(matBucket=1)/504;
+Volume2=tradeValue*(matBucket=2)/504;
+Volume3=tradeValue*(matBucket=3)/504;
+Volume4=tradeValue*(matBucket=4)/504;
+Volume5=tradeValue*(matBucket=5)/504;
+end;
+
+run;
+
+******************************************************************************************************************************************************;
+*Summary Statistics;
+******************************************************************************************************************************************************;
+
+data tracetradestrim2;set data.tracetradestrim; 
+dailytrades=ntrades/504;dailyvalue=tradeValue/504;frequency=countTdays/504;													*The time frame is two years, or 504 trading days;
+run;
+data end; set tracetradestrim2; by cusip; where endofday=1; dailyvolume=volume/504;run;												*Separate the finals trades of the day for volume aggregation;
+
+proc means data=tracetradestrim2 noprint mean; class matBucket; var ntrades; output out=meantrades N=Count mean=Mean P1=P1 P5=P5 P25=P25 P50=P50 P75=P75 P95=P95; 		*Summarize Number of Trades;
+run;
+proc means data=tracetradestrim2 noprint mean; class matBucket; var dailytrades; output out=meandailytrades N=Count mean=Mean P1=P1 P5=P5 P25=P25 P50=P50 P75=P75 P95=P95; 	*Summarize Trade Rate;
+run;
+proc means data=tracetradestrim2 noprint mean; class matBucket; var dailyvolume; output out=meandailyvolume N=Count mean=Mean P1=P1 P5=P5 P25=P25 P50=P50 P75=P75 P95=P95;	*Summarize Intraday Daily Volume=TradeValue;
+run;
+proc means data=tracetradestrim2 noprint mean; class matBucket; var dailyvalue; output out=meandailyvalue N=Count mean=Mean P1=P1 P5=P5 P25=P25 P50=P50 P75=P75 P95=P95;	*Summarize Trade Value;
+run;
+proc means data=tracetradestrim2 noprint mean; class matBucket; var frequency; output out=frequency N=Count mean=Mean P1=P1 P5=P5 P25=P25 P50=P50 P75=P75 P95=P95;		*Summarize frequency;
+run;
+proc means data=end noprint mean; class matBucket; var dailyvolume; output out=meandailyvolume N=Count mean=Mean P1=P1 P5=P5 P25=P25 P50=P50 P75=P75 P95=P95;			*Summarize daily volume;
+run;
+
+%let _edtm=%sysfunc(datetime());																																		*This is the end of the timing process;
+%let _runtm=%sysfunc(putn(&_edtm - &_sdtm, 12.4));
+%put It took &_runtm second to run the program;
+
+******************************************************************************************************************************************************;
+*Export: Exports tables into MS Excel;
+******************************************************************************************************************************************************;
+
+proc export data=Work.meantrades
+	outfile = "T:\Khizar\AvgTrades_Maturity.csv" 
+	dbms=csv replace;
+	run;
+
+	proc export data=Work.meandailytrades
+	outfile = "T:\Khizar\Rate_Maturity.csv" 
+	dbms=csv replace;
+	run;
+
+proc export data=Work.meandailyvalue
+	outfile = "T:\Khizar\Value_Maturity.csv" 
+	dbms=csv replace;
+	run;
+
+proc export data=Work.meandailyvolume
+	outfile = "T:\Khizar\Volume_Maturity.csv" 
+	dbms=csv replace;
+	run;
+
+proc export data=Work.frequency
+	outfile = "T:\Khizar\Frequency_Maturity.csv" 
+	dbms=csv replace;
+	run;
+
+******************************************************************************************************************************************************;
+*End;
+******************************************************************************************************************************************************;
+
+data Data.tradesByCusip;*interested in trades per cusip and arrival rate;
+set Data.Tracetradestrim; where countTDays>=2;									*concatenate main data set;
+by Cusip;																		*organize by cusip;
+
+
+ntrades0=ntrades*(matBucket=0);													*Count trades by maturity;
+ntrades1=ntrades*(matBucket=1);
+ntrades2=ntrades*(matBucket=2);
+ntrades3=ntrades*(matBucket=3);
+ntrades4=ntrades*(matBucket=4);
+ntrades5=ntrades*(matBucket=5);
+
+										*Frequency is defined as the fraction of trading days in which at least one trade occurs;
+
+
+*output if all cusips considered;
+if last.Cusip then output;														*end when the last recorded trade for a cusip is considered;
+run;
+data endbycusip;
+set data.tradesbycusip; by cusip;where endofday=1;
+
+rateTrades = ntrades/504;												*once five trading days have passed, find arrival rate using updating number of trades and days;
+rateTrades0=ntrades0/504;
+rateTrades1=ntrades1/504;
+rateTrades2=ntrades2/504;
+rateTrades3=ntrades3/504;
+rateTrades4=ntrades4/504;
+rateTrades5=ntrades5/504;
+
+*find trades per day with minimum number of trading days;
+trades_day = ntrades/countTdays;
+trades_day0=ntrades0/countTdays;												*divide number of total trades by number of total days of trading;
+trades_day1=ntrades1/countTdays;
+trades_day2=ntrades2/countTdays;
+trades_day3=ntrades3/countTdays;
+trades_day4=ntrades4/countTdays;
+trades_day5=ntrades5/countTdays;
+frequency = countTdays/(504);											*Frequency is defined as the fraction of trading days in which at least one trade occurs;
+
+
+
+run;
+proc sort data=Endbycusip out=Endbycusip; by Cusip matBucket; run;	*sort by ascending cusip and maturity;
+proc means data=Endbycusip noprint;										*Study frequency across cusips;
+by cusip;
+var frequency matBucket;
+output out=FrequencybyCusip mean(frequency)=mean_Frequency max(matBucket)=max_Maturity  N=Count mean=Mean P1=P1 P5=P5 P25=P25 P50=P50 P75=P75 P95=P95;
+run;
+proc sort data=frequencybycusip out=frequencySorted;by max_Maturity;run;
+proc means data=FrequencySorted noprint;										*Output frequency distribution;
+by max_Maturity;
+var Mean_Frequency;
+output out =FreqDist N=Count mean=Mean P1=P1 P5=P5 P25=P25 P50=P50 P75=P75 P95=P95;
+run; 
+proc means data=Frequencybycusip noprint;
+var Mean_frequency;
+output out =FreqDistAll N=Count mean=Mean P1=P1 P5=P5 P25=P25 P50=P50 P75=P75 P95=P95;
+run; 
+
+
+
+
+proc sort data=endbycusip out=endbycusip ; by Cusip matBucket; run;
+proc means data=endbycusip  noprint;
+by Cusip;
+var rateTrades ratetrades0 ratetrades1 ratetrades2 ratetrades3 ratetrades4 ratetrades5;
+output out=RatesbyCusip mean(ratetrades)=mean_rate max(matBucket)=max_Maturity  N=Count mean=Mean P1=P1 P5=P5 P25=P25 P50=P50 P75=P75 P95=P95;
+run;
+
+
+proc sort data=endbycusip out=endbycusip ; by Cusip matBucket; run;
+proc means data=endbycusip  noprint;
+by Cusip;
+var trades_day trades_day0 trades_day1 trades_day2 trades_day3 trades_day4 trades_day5;
+output out=AvgbyCusip mean(trades_day)=mean_rate max(matBucket)=max_Maturity  N=Count mean=Mean P1=P1 P5=P5 P25=P25 P50=P50 P75=P75 P95=P95;
+run;
+
+
+
+
+proc sort data=RatesbyCusip;by max_Maturity; run;
+proc means data=RatesbyCusip noprint;
+by max_Maturity;
+var Mean P1 P5 P25 P50 P75 P95 P95;
+output out=RatesDist1 N=Count mean=Mean P1=P1 P5=P5 P25=P25 P50=P50 P75=P75 P95=P95;;
+run;
+proc means data=RatesbyCusip noprint;
+var Mean P1 P5 P25 P50 P75 P95 P95;
+output out=RatesDist1All N=Count mean=Mean P1=P1 P5=P5 P25=P25 P50=P50 P75=P75 P95=P95;;
+run;
+proc sort data=AvgbyCusip;by max_Maturity; run;
+proc means data=RatesbyCusip noprint;
+by max_Maturity;
+var Mean P1 P5 P25 P50 P75 P95 P95;
+output out=AvgDist1 N=Count mean=Mean P1=P1 P5=P5 P25=P25 P50=P50 P75=P75 P95=P95;;
+run;
+proc means data=RatesbyCusip noprint;
+var Mean P1 P5 P25 P50 P75 P95 P95;
+output out=AvgDist1All N=Count mean=Mean P1=P1 P5=P5 P25=P25 P50=P50 P75=P75 P95=P95;;
+run; 
+
+
+
+
+
+
+
+
+******************************************************************************************************************************************************;
+*Trade Value: Defined as the transaction in value, as determined by a price and quantity of trade;
+******************************************************************************************************************************************************;
+
+proc sort data=Data.Tracetradestrim out=Data.Tracetradestrim; by Cusip matBucket; run;
+
+proc means data = Data.Tracetradestrim noprint;										*Refer to main dataset;
+by Cusip matBucket;	
+var tradeValue;																		*Interested in trade value across maturity;
+output out = valuebyCusip mean(tradeValue)=Val_bar max(matBucket)=max_Maturity; 		*find mean of trade value;
+run;
+
+data value0; set valuebyCusip; where matBucket=0; run;							*Isolate maturity bucket;
+data value1; set valuebyCusip; where matBucket=1; run;							*Isolate maturity bucket;
+data value2; set valuebyCusip; where matBucket=2; run;							*Isolate maturity bucket;
+data value3; set valuebyCusip; where matBucket=3; run;							*Isolate maturity bucket;
+data value4; set valuebyCusip; where matBucket=4; run;							*Isolate maturity bucket;
+data value5; set valuebyCusip; where matBucket=5; run;							*Isolate maturity bucket;
+	
+proc means data=value0 noprint; 												*Consider the mean trade value across maturity;	
+var Val_bar;
+output out= distVal0 N=Count mean=Mean P1=P1 P5=P5 P25=P25 P50=P50 P75=P75 P95=P95;					*Output the distribution of mean trade value by maturity;
+run;
+
+proc means data=value1 noprint; 												*Consider the mean trade value across maturity;	
+var Val_bar;
+output out= distVal1 N=Count mean=Mean P1=P1 P5=P5 P25=P25 P50=P50 P75=P75 P95=P95;					*Output the distribution of mean trade value by maturity;
+run;
+
+proc means data=value2 noprint; 												*Consider the mean trade value across maturity;	
+var Val_bar;
+output out= distVal2 N=Count mean=Mean P1=P1 P5=P5 P25=P25 P50=P50 P75=P75 P95=P95;					*Output the distribution of mean trade value by maturity;
+run;
+
+proc means data=value3 noprint; 												*Consider the mean trade value across maturity;	
+var Val_bar;
+output out= distVal3 N=Count mean=Mean P1=P1 P5=P5 P25=P25 P50=P50 P75=P75 P95=P95;					*Output the distribution of mean trade value by maturity;
+run;
+
+proc means data=value4 noprint; 												*Consider the mean trade value across maturity;	
+var Val_bar;
+output out= distVal4 N=Count mean=Mean P1=P1 P5=P5 P25=P25 P50=P50 P75=P75 P95=P95;					*Output the distribution of mean trade value by maturity;
+run;
+
+proc means data=value5 noprint; 												*Consider the mean trade value across maturity;	
+var Val_bar;
+output out= distVal5 N=Count mean=Mean P1=P1 P5=P5 P25=P25 P50=P50 P75=P75 P95=P95;				*Output the distribution of mean trade value by maturity;
+run;
+
+proc means data=valuebyCusip noprint; 												*Consider the mean trade value across all maturity;	
+var Val_bar;
+output out= distVal N=Count mean=Mean P1=P1 P5=P5 P25=P25 P50=P50 P75=P75 P95=P95;						*Output the distribution of mean trade value by maturity;
+run;
+
+data valDist; set distVal distVal0 distVal1 distVal2 distVal3 distVal4 distVal5; run;						*Stack each distribution;
+
+******************************************************************************************************************************************************;
+*Mean Dollar Volume: Defined as the aggregate trade value over the span of a time period;
+******************************************************************************************************************************************************;
+*Volume=Cumulative intraday trade Value;
+
+
+data Data.endofDayVolume; set Data.TraceTradestrim; where endofday=1;run;			*Count volume only at end of day;
+proc sort data=data.endofdayvolume out=data.endofdayvolume;by cusip matbucket;run;
+proc means data=Data.endofDayVolume noprint;
+by Cusip;
+var Volume Volume0 Volume1 Volume2 Volume3 Volume4 Volume5 matBucket;									*Study trade type volume at end of day;
+output out = volumebyCusip mean(Volume)=mean_Volume max(matBucket)=max_Maturity N=Count mean=Mean P1=P1 P5=P5 P25=P25 P50=P50 P75=P75 P95=P95;
+run;
+
+proc sort data=VolumebyCusip out=VolumebyCusip; by max_Maturity; run; *Only averages;
+proc means data=VolumebyCusip noprint;
+by max_Maturity;
+var Mean P1 P5 P25 P50 P75 P95 P95;
+output out=VolumeDist1 N=Count mean=Mean P1=P1 P5=P5 P25=P25 P50=P50 P75=P75 P95=P95;
+run;
+proc means data=VolumebyCusip noprint;
+var Mean P1 P5 P25 P50 P75 P95 P95;
+output out=VolumeDist1All N=Count mean=Mean P1=P1 P5=P5 P25=P25 P50=P50 P75=P75 P95=P95;
+run;
+
+
+
+
+
+
+******************************************************************************************************************************************************;
+*Number of Trades: Defined as a count of trades;
+******************************************************************************************************************************************************;
+
+*Number of Trades;
+*Counting trades across each trade type;
+
+proc means data=Data.tracetradestrim noprint mean;	
+class matBucket;																*Interested in trades across trade types for each maturity;
+var Ntrades;
+output out = Data.distrTrades N=Count mean=Mean P1=P1 P5=P5 P25=P25 P50=P50 P75=P75 P95=P95;
+run;
+data tradeDist; set Data.distrTrades;  run;
+
+
+
+
+
+
+
+
+
+
+
+
+data Data.TraceTradesHistogram; 														*Data.Tracetradestrim will be the primary dataset;
+set Data.Tracetradestrim; where yeartoMat<=110 & yeartoMat>=0;	*To truncate the dataset for initial testing;														
+run;
+
+	proc SGPLOT data=data.TracetradesHistogram;
+	HISTOGRAM yeartoMat;
+			XAXIS LABEL='years to Maturity' GRID VALUES=(0 TO 110 by 1);
+
+			TITLE 'Trades and Maturity';
+	run;
+
+
+
+	*Accoreding to S&P, BBB- bonds ~0.7% yield. Alan requested 0.75% yield;
+data Data.TraceTradesHistogram; 														*Data.Tracetradestrim will be the primary dataset;
+set Data.Tracetradestrim; where yeartoMat<=30.1 & yeartoMat>=0 & benchmarkSpread<=750 & benchmarkSpread>=0;* & EffectiveDateTime >= '01Jan2014:00:00:00'DT;	*To truncate the dataset for initial testing;														
+run;
+	ods graphics on;
+	proc kde data=data.TracetradesHistogram;
+		bivar yeartoMat benchmarkSpread / plots=all;
+		run;
+		ods graphics off;
+
+		proc SGPLOT data=data.TracetradesHistogram;
+	HISTOGRAM yeartoMat;
+			XAXIS LABEL='years to Maturity' GRID VALUES=(0 to 30 by 1);
+			YAXIS LABEL='Percent of Recorded Trades' GRID VALUES=(0 to 2 by 0.1);
+			TITLE 'Trades and Maturity';
+	run;
+		proc SGPLOT data=data.TraceTradesHistogram;
+		HISTOGRAM benchmarkSpread;
+			XAXIS LABEL='Credit Spread' GRID VALUES=(0 TO 750 by 10);
+			YAXIS LABEL='Percent of Recorded Trades' GRID VALUES=(0 to 2 by 0.1);
+			TITLE 'Trades and Credit Spread';
+		run;
+
+
+
+
+*timer; 												*This is the end of the timing process;
+%let _edtm=%sysfunc(datetime());
+%let _runtm=%sysfunc(putn(&_edtm - &_sdtm, 12.4));
+%put It took &_runtm second to run the program;
+
+
+
+
+
+
+
+
+
+proc means data=end noprint mean; class matBucket; var dailyvolume; output out=meandailyvolume N=Count mean=Mean P1=P1 P5=P5 P25=P25 P50=P50 P75=P75 P95=P95;
+run;
+
+
+
+
+******************************************************************************************************************************************************;
+*Export: Exports tables into MS Excel;
+******************************************************************************************************************************************************;
+
+*libname Data "&path\Data";
+*EXPORT ROUTINES;
+proc export data=Work.AvgDist1
+	outfile = "T:\Khizar\AvgTrades_Maturity.csv" 
+	dbms=csv replace;
+	run;
+
+proc export data=Work.RatesDist1
+	outfile = "T:\Khizar\Rates_Maturity.csv" 
+	dbms=csv replace;
+	run;
+
+
+
+proc export data=Work.ValDist
+	outfile = "T:\Khizar\Value_Maturity.csv" 
+	dbms=csv replace;
+	run;
+
+proc export data=Work.VolumeDist1
+	outfile = "T:\Khizar\Volume_Maturity.csv" 
+	dbms=csv replace;
+	run;
+
+proc export data=Work.Freqdist
+	outfile = "T:\Khizar\Frequency_Maturity.csv" 
+	dbms=csv replace;
+	run;
+
+proc export data=Work.tradeDist
+	outfile = "T:\Khizar\Trades_Maturity.csv"
+	dbms=csv replace;
+	run;
+
+
+
+	
+proc export data=Work.VolumeDist1All
+	outfile = "T:\Khizar\Volume_Maturity_All.csv" 
+	dbms=csv replace;
+	run;
+
+proc export data=Work.FreqdistAll
+	outfile = "T:\Khizar\Frequency_Maturity_All.csv" 
+	dbms=csv replace;
+	run;
+proc export data=Work.AvgDist1All
+	outfile = "T:\Khizar\AvgTrades_Maturity_All.csv" 
+	dbms=csv replace;
+	run;
+
+proc export data=Work.RatesDist1All
+	outfile = "T:\Khizar\Rates_Maturity_All.csv" 
+	dbms=csv replace;
+	run;
+
+
+
+
+
+
+
+** Overall Output--Not by class;
+
+
+
+
+
+
+
+
+
+
